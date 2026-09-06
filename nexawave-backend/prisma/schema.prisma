@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserMode {
+  RURAL
+  URBAN
+}
+
+enum UserRole {
+  USER
+  PROVIDER
+  ORGANIZATION
+  ADMIN
+}
+
+enum KYCStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RequirementCategory {
+  MACHINERY
+  FARM_LABOR
+  CROP_TRADE
+  HOME_SERVICE
+  BEAUTY_WELLNESS
+  FOOD_DELIVERY
+  PROFESSIONAL_SERVICE
+}
+
+enum InputMode {
+  TEXT
+  VOICE
+  VIDEO
+}
+
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum OrderStatus {
+  CONFIRMED
+  ON_THE_WAY
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  UPI
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum DisputeStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+enum SubscriptionPlan {
+  FREE
+  ORGANIZATION_PREMIUM
+}
+
+enum CropCategory {
+  ANAAJ
+  DAALE
+  TILHAN
+}
+
+enum MachineryType {
+  TRACTOR
+  HARVESTER
+  ROTAVATOR
+  SEEDER
+  OTHER
+}
+
+enum MachineryRentalMode {
+  WITH_DRIVER
+  WITHOUT_DRIVER
+}
+
+// ==========================================
+// USER & AUTH
+// ==========================================
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  phone         String    @unique
+  email         String?   @unique
+  passwordHash  String?
+  mode          UserMode  @default(RURAL)
+  role          UserRole  @default(USER)
+
+  isVerified    Boolean   @default(false) // Blue Tick
+  avgRating     Float     @default(0)
+  totalRatings  Int       @default(0)
+
+  latitude      Float?
+  longitude     Float?
+  address       String?
+  city          String?
+  state         String?
+  pincode       String?
+
+  isActive      Boolean   @default(true)
+  isSuspended   Boolean   @default(false)
+  suspendReason String?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  kyc              KYC?
+  organization     Organization?
+  cropListings     CropListing[]
+  machinery        Machinery[]
+  requirements     Requirement[]      @relation("RequirementPoster")
+  bids             Bid[]              @relation("BidProvider")
+  ordersAsCustomer Order[]            @relation("OrderCustomer")
+  ordersAsProvider Order[]            @relation("OrderProvider")
+  ratingsGiven     Rating[]           @relation("RatingGiver")
+  ratingsReceived  Rating[]           @relation("RatingReceiver")
+  disputesRaised   Dispute[]          @relation("DisputeRaisedBy")
+  sentMessages     Message[]          @relation("MessageSender")
+  otps             OtpVerification[]
+
+  @@index([mode, city])
+}
+
+model OtpVerification {
+  id        String   @id @default(uuid())
+  userId    String?
+  phone     String
+  otpHash   String
+  purpose   String   // LOGIN, REGISTER, KYC
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+// ==========================================
+// KYC (DPDP ACT COMPLIANT)
+// ==========================================
+
+model KYC {
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id])
+
+  aadhaarImageUrl   String
+  panImageUrl       String
+
+  aadhaarMasked     String?   // e.g. XXXX-XXXX-1234
+  panMasked         String?   // e.g. XXXXX1234X
+
+  status            KYCStatus @default(PENDING)
+  rejectionReason   String?
+
+  reviewedByAdminId String?
+  reviewedAt        DateTime?
+
+  submittedAt       DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// ==========================================
+// ORGANIZATION (PREMIUM SUBSCRIPTION)
+// ==========================================
+
+model Organization {
+  id            String            @id @default(uuid())
+  userId        String            @unique
+  user          User              @relation(fields: [userId], references: [id])
+
+  companyName   String
+  gstNumber     String?
+  plan          SubscriptionPlan  @default(FREE)
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+  monthlyFee    Float             @default(500)
+
+  createdAt     DateTime          @default(now())
+}
+
+// ==========================================
+// RURAL: CROP LISTINGS
+// ==========================================
+
+model CropListing {
+  id           String       @id @default(uuid())
+  farmerId     String
+  farmer       User         @relation(fields: [farmerId], references: [id])
+
+  category     CropCategory
+  cropName     String
+  quantityKg   Float
+  pricePerKg   Float
+  harvestDate  DateTime?
+  images       String[]
+  location     String
+  latitude     Float?
+  longitude    Float?
+
+  isSold       Boolean      @default(false)
+  isActive     Boolean      @default(true)
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([category, isActive])
+}
+
+// APMC market prices (reference data, updated via cron/scraper)
+model MarketPrice {
+  id          String    @id @default(uuid())
+  mandiName   String
+  state       String
+  cropName    String
+  minPrice    Float
+  maxPrice    Float
+  modalPrice  Float
+  date        DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([cropName, state, date])
+}
+
+// ==========================================
+// RURAL: MACHINERY RENTAL
+// ==========================================
+
+model Machinery {
+  id             String              @id @default(uuid())
+  ownerId        String
+  owner          User                @relation(fields: [ownerId], references: [id])
+
+  type           MachineryType
+  name           String
+  rentalMode     MachineryRentalMode
+  pricePerHour   Float?
+  pricePerDay    Float?
+  images         String[]
+
+  isAvailable    Boolean             @default(true)
+  latitude       Float?
+  longitude      Float?
+  address        String?
+
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+// ==========================================
+// THE ENGINE: REQUIREMENT -> BID -> ORDER
+// ==========================================
+
+model Requirement {
+  id            String                @id @default(uuid())
+  postedById    String
+  postedBy      User                  @relation("RequirementPoster", fields: [postedById], references: [id])
+
+  category      RequirementCategory
+  title         String
+  description   String
+  inputMode     InputMode             @default(TEXT)
+  mediaUrl      String?               // voice/video attachment
+
+  latitude      Float
+  longitude     Float
+  radiusKm      Float                 @default(10)
+
+  budgetMin     Float?
+  budgetMax     Float?
+
+  isClosed      Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  bids          Bid[]
+  order         Order?
+
+  @@index([category, isClosed])
+}
+
+model Bid {
+  id             String      @id @default(uuid())
+  requirementId  String
+  requirement    Requirement @relation(fields: [requirementId], references: [id])
+
+  providerId     String
+  provider       User        @relation("BidProvider", fields: [providerId], references: [id])
+
+  quotedAmount   Float
+  message        String?
+  estimatedTime  String?     // e.g. "2 hours", "Next Day"
+  validUntil     DateTime?
+
+  status         BidStatus   @default(PENDING)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  order          Order?
+
+  @@index([requirementId, status])
+}
+
+// ==========================================
+// ORDER / BOOKING + LIVE TRACKING
+// ==========================================
+
+model Order {
+  id             String        @id @default(uuid())
+
+  requirementId  String        @unique
+  requirement    Requirement   @relation(fields: [requirementId], references: [id])
+
+  acceptedBidId  String        @unique
+  acceptedBid    Bid           @relation(fields: [acceptedBidId], references: [id])
+
+  customerId     String
+  customer       User          @relation("OrderCustomer", fields: [customerId], references: [id])
+
+  providerId     String
+  provider       User          @relation("OrderProvider", fields: [providerId], references: [id])
+
+  status         OrderStatus   @default(CONFIRMED)
+  finalAmount    Float
+
+  platformFee    Float         @default(0) // 3% flat fee
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  statusHistory  OrderStatusLog[]
+  transaction    Transaction?
+  dispute        Dispute?
+  messages       Message[]
+  ratings        Rating[]
+}
+
+// Vertical timeline tracking (Confirmed -> On the Way -> In Progress -> Completed)
+model OrderStatusLog {
+  id        String      @id @default(uuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id])
+
+  status    OrderStatus
+  note      String?
+  timestamp DateTime    @default(now())
+}
+
+// ==========================================
+// PAYMENTS
+// ==========================================
+
+model Transaction {
+  id             String        @id @default(uuid())
+  orderId        String        @unique
+  order          Order         @relation(fields: [orderId], references: [id])
+
+  amount         Float
+  platformFee    Float
+  providerPayout Float
+
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  gatewayRefId   String?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+// ==========================================
+// CHAT (WhatsApp-style)
+// ==========================================
+
+model Message {
+  id         String   @id @default(uuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id])
+
+  senderId   String
+  sender     User     @relation("MessageSender", fields: [senderId], references: [id])
+
+  content    String?
+  mediaUrl   String?
+  isRead     Boolean  @default(false)
+
+  createdAt  DateTime @default(now())
+}
+
+// ==========================================
+// RATINGS (Mandatory 2-way, 5-star)
+// ==========================================
+
+model Rating {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id])
+
+  givenById    String
+  givenBy      User     @relation("RatingGiver", fields: [givenById], references: [id])
+
+  givenToId    String
+  givenTo      User     @relation("RatingReceiver", fields: [givenToId], references: [id])
+
+  stars        Int      // 1-5
+  review       String?
+
+  createdAt    DateTime @default(now())
+
+  @@unique([orderId, givenById])
+}
+
+// ==========================================
+// DISPUTES
+// ==========================================
+
+model Dispute {
+  id             String        @id @default(uuid())
+  orderId        String        @unique
+  order          Order         @relation(fields: [orderId], references: [id])
+
+  raisedById     String
+  raisedBy       User          @relation("DisputeRaisedBy", fields: [raisedById], references: [id])
+
+  reason         String
+  description    String
+  evidenceUrls    String[]
+
+  status         DisputeStatus @default(OPEN)
+  resolutionNote String?
+  resolvedByAdminId String?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+// ==========================================
+// ADMIN
+// ==========================================
+
+model Admin {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  accessKey    String   @unique // used with /admin/dashboard/login
+  isSuperAdmin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
