@@ -47,21 +47,23 @@ By eliminating middlemen and integrating inclusive features like Voice/Video req
 To run NexaWave locally on your machine, follow these steps:
 
 ### 1. Clone the Repository
-```bash
+bash
 git clone [https://github.com/Shailey07/NexaWave.git](https://github.com/Shailey07/NexaWave.git)
 cd NexaWave
+
+
 ###2. Backend Setup (Port 5000)
-```Bash
+Bash
 cd nexawave-backend
 npm install
 Bash
 npx prisma migrate dev --name init
 npm run dev
+
+
 3. Frontend Setup (Port 5173)
 Open a new terminal window:
-
 Bash
 cd nexawave-frontend
 npm install
-
 npm run dev
